@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math/rand"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
@@ -22,6 +23,7 @@ type Scheduler struct {
 	clientset  *kubernetes.Clientset
 	podQueue   chan *v1.Pod
 	nodeLister listersv1.NodeLister
+	ctx        context.Context
 }
 
 func NewScheduler(podQueue chan *v1.Pod, quit chan struct{}) Scheduler {
@@ -39,6 +41,7 @@ func NewScheduler(podQueue chan *v1.Pod, quit chan struct{}) Scheduler {
 		clientset:  clientset,
 		podQueue:   podQueue,
 		nodeLister: initInformers(clientset, podQueue, quit),
+		ctx:        context.Background(),
 	}
 }
 
@@ -108,7 +111,7 @@ func (s *Scheduler) SchedulePods() error {
 			continue
 		}
 
-		message := fmt.Sprintf("Placed pod [%s/%s] on %s\n", p.Namespace, p.Name, node.Name)
+		message := fmt.Sprintf("Placed :) pod [%s/%s] on %s\n", p.Namespace, p.Name, node.Name)
 
 		err = s.emitEvent(p, message)
 		if err != nil {
@@ -130,7 +133,7 @@ func (s *Scheduler) findFit() (*v1.Node, error) {
 }
 
 func (s *Scheduler) bindPod(p *v1.Pod, randomNode *v1.Node) error {
-	return s.clientset.CoreV1().Pods(p.Namespace).Bind(&v1.Binding{
+	return s.clientset.CoreV1().Pods(p.Namespace).Bind(s.ctx, &v1.Binding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      p.Name,
 			Namespace: p.Namespace,
@@ -140,12 +143,12 @@ func (s *Scheduler) bindPod(p *v1.Pod, randomNode *v1.Node) error {
 			Kind:       "Node",
 			Name:       randomNode.Name,
 		},
-	})
+	}, metav1.CreateOptions{})
 }
 
 func (s *Scheduler) emitEvent(p *v1.Pod, message string) error {
 	timestamp := time.Now().UTC()
-	_, err := s.clientset.CoreV1().Events(p.Namespace).Create(&v1.Event{
+	_, err := s.clientset.CoreV1().Events(p.Namespace).Create(s.ctx, &v1.Event{
 		Count:          1,
 		Message:        message,
 		Reason:         "Scheduled",
@@ -164,7 +167,7 @@ func (s *Scheduler) emitEvent(p *v1.Pod, message string) error {
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: p.Name + "-",
 		},
-	})
+	}, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
